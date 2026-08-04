@@ -193,8 +193,8 @@ class TeradataParser(parser.Parser):
             any_token=any_token,
         )
 
-    def _parse_column_ops(self, this: exp.Expr | None) -> exp.Expr | None:
-        this = super()._parse_column_ops(this)
+    def _parse_column_ops(self, this: exp.Expr | None, operand: bool = False) -> exp.Expr | None:
+        this = super()._parse_column_ops(this, operand=operand)
 
         if self._match_pair(TokenType.L_PAREN, TokenType.FORMAT):
             # `(FORMAT <format_string>)` after a column specifies a Teradata format override.

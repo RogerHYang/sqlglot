@@ -1071,6 +1071,16 @@ class Parser:
         TokenType.DCOLON,
     }
 
+    # Column operators whose right side is an expression instead of a field name, so that
+    # qualification, subscripts and casts bind to it rather than to the operator's result
+    EXPRESSION_COLUMN_OPERATORS: t.ClassVar = {
+        TokenType.ARROW,
+        TokenType.DARROW,
+        TokenType.HASH_ARROW,
+        TokenType.DHASH_ARROW,
+        TokenType.PLACEHOLDER,
+    }
+
     EXPRESSION_PARSERS: t.ClassVar = {
         exp.Cluster: lambda self: self._parse_sort(exp.Cluster, TokenType.CLUSTER_BY),
         exp.Column: lambda self: self._parse_column(),
@@ -6934,7 +6944,7 @@ class Parser:
     def _parse_dcolon(self) -> exp.Expr | None:
         return self._parse_types()
 
-    def _parse_column_ops(self, this: exp.Expr | None) -> exp.Expr | None:
+    def _parse_column_ops(self, this: exp.Expr | None, operand: bool = False) -> exp.Expr | None:
         while self._curr.token_type in self.BRACKETS:
             this = self._parse_bracket(this)
 
@@ -6945,6 +6955,14 @@ class Parser:
 
             if op_token not in column_operators:
                 break
+
+            # Only qualification, subscripts and casts bind tighter than the other column
+            # operators, so an operand stops at anything else. This preserves both precedence,
+            # e.g. a #>> b::TEXT[] is a #>> (b::TEXT[]) in Postgres, and left associativity,
+            # e.g. a -> b.c -> d is (a -> b.c) -> d
+            if operand and op_token != TokenType.DOT and op_token not in cast_column_operators:
+                break
+
             op = column_operators[op_token]
             self._advance()
 
@@ -6954,7 +6972,9 @@ class Parser:
                     self.raise_error("Expected type")
             elif op and self._curr:
                 field = self._parse_column_reference() or self._parse_bitwise()
-                if isinstance(field, exp.Column) and self._match(TokenType.DOT, advance=False):
+                if field and op_token in self.EXPRESSION_COLUMN_OPERATORS:
+                    field = self._parse_column_ops(field, operand=True)
+                elif isinstance(field, exp.Column) and self._match(TokenType.DOT, advance=False):
                     field = self._parse_column_ops(field)
             else:
                 dot = self._is_connected() and self._prev.token_type == TokenType.DOT

@@ -226,8 +226,8 @@ class OracleParser(parser.Parser):
     def _parse_connect_with_prior(self):
         return self._parse_assignment()
 
-    def _parse_column_ops(self, this: exp.Expr | None) -> exp.Expr | None:
-        this = super()._parse_column_ops(this)
+    def _parse_column_ops(self, this: exp.Expr | None, operand: bool = False) -> exp.Expr | None:
+        this = super()._parse_column_ops(this, operand=operand)
 
         if not this:
             return this

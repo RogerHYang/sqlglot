@@ -770,9 +770,9 @@ class BigQueryParser(parser.Parser):
             )
         )
 
-    def _parse_column_ops(self, this: exp.Expr | None) -> exp.Expr | None:
+    def _parse_column_ops(self, this: exp.Expr | None, operand: bool = False) -> exp.Expr | None:
         func_index = self._index + 1
-        this = super()._parse_column_ops(this)
+        this = super()._parse_column_ops(this, operand=operand)
 
         if isinstance(this, exp.Dot) and isinstance(this.expression, exp.Func):
             prefix = this.this.name.upper()

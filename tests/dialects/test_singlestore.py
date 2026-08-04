@@ -144,6 +144,12 @@ class TestSingleStore(Validator):
         )
         self.validate_identity("SELECT a::2 FROM t", "SELECT JSON_EXTRACT_JSON(a, '2') FROM t")
 
+        # Unlike the JSON operators of other dialects, `::` takes a field name, so a cast that
+        # follows it applies to the extracted value
+        self.validate_identity(
+            "SELECT a::b :> INT FROM t", "SELECT JSON_EXTRACT_JSON(a, 'b') :> INT FROM t"
+        )
+
         self.validate_all(
             "SELECT JSON_EXTRACT_JSON(a, 'b') FROM t",
             read={

@@ -418,6 +418,52 @@ class TestPostgres(Validator):
             """SELECT JSON_ARRAY_ELEMENTS((foo->'sections')::JSON) AS sections""",
             """SELECT JSON_ARRAY_ELEMENTS(CAST((foo -> 'sections') AS JSON)) AS sections""",
         )
+
+        # Casts bind tighter than the JSON operators, so they apply to their right operand
+        self.validate_identity(
+            """SELECT '{"a":4}'::jsonb #>> '{a}'::text[]""",
+            """SELECT CAST('{"a":4}' AS JSONB) #>> CAST('{a}' AS TEXT[])""",
+        )
+        self.validate_identity(
+            """SELECT '{"a":{"b":4}}'::jsonb #> '{a}'::text[]""",
+            """SELECT CAST('{"a":{"b":4}}' AS JSONB) #> CAST('{a}' AS TEXT[])""",
+        )
+        self.validate_identity(
+            """SELECT '{"a":4}'::jsonb -> 'a'::text""",
+            """SELECT JSON_EXTRACT_PATH(CAST('{"a":4}' AS JSONB), CAST('a' AS TEXT))""",
+        )
+        self.validate_identity(
+            """SELECT '{"a":4}'::jsonb ->> 'a'::text""",
+            """SELECT JSON_EXTRACT_PATH_TEXT(CAST('{"a":4}' AS JSONB), CAST('a' AS TEXT))""",
+        )
+        self.validate_identity(
+            """SELECT '{"a":4}'::jsonb ? 'a'::text""",
+            """SELECT CAST('{"a":4}' AS JSONB) ? CAST('a' AS TEXT)""",
+        )
+        # This is how pg_get_indexdef() renders an expression index over a JSON path
+        self.validate_identity(
+            "CREATE INDEX ix_spans_session_id ON spans (((attributes #>> '{session,id}'::text[])::character varying))",
+            "CREATE INDEX ix_spans_session_id ON spans((CAST((attributes #>> CAST('{session,id}' AS TEXT[])) AS VARCHAR)))",
+        )
+
+        # Subscripts bind tighter than the JSON operators as well
+        self.validate_identity(
+            "SELECT x -> y[1]",
+            "SELECT JSON_EXTRACT_PATH(x, y[1])",
+        )
+        self.validate_identity("x #> y[1]").assert_is(exp.JSONBExtract).expression.assert_is(
+            exp.Bracket
+        )
+
+        # The JSON operators are left associative, even if their right operand is qualified
+        self.validate_identity(
+            "SELECT x -> y.z -> w",
+            "SELECT JSON_EXTRACT_PATH(JSON_EXTRACT_PATH(x, y.z), w)",
+        )
+        self.validate_identity("x #> y.z #> w").assert_is(exp.JSONBExtract).this.assert_is(
+            exp.JSONBExtract
+        )
+
         self.validate_identity(
             "MERGE INTO x USING (SELECT id) AS y ON a = b WHEN MATCHED THEN UPDATE SET x.a = y.b WHEN NOT MATCHED THEN INSERT (a, b) VALUES (y.a, y.b)",
             "MERGE INTO x USING (SELECT id) AS y ON a = b WHEN MATCHED THEN UPDATE SET a = y.b WHEN NOT MATCHED THEN INSERT (a, b) VALUES (y.a, y.b)",
