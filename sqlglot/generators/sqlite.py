@@ -113,7 +113,8 @@ class SQLiteGenerator(generator.Generator):
     SUPPORTS_TO_NUMBER = False
     SUPPORTS_WINDOW_EXCLUDE = True
     EXCEPT_INTERSECT_SUPPORT_ALL_CLAUSE = False
-    SUPPORTS_MEDIAN = False
+    # MEDIAN ships with SQLite's percentile extension, https://www.sqlite.org/percentile.html
+    SUPPORTS_MEDIAN = True
     JSON_KEY_VALUE_PAIR_SEP = ","
     PARSE_JSON_NAME: str | None = None
 
@@ -172,6 +173,7 @@ class SQLiteGenerator(generator.Generator):
         exp.LogicalAnd: rename_func("MIN"),
         exp.Pivot: no_pivot_sql,
         exp.Rand: rename_func("RANDOM"),
+        exp.RegexpLike: lambda self, e: self.binary(e, "REGEXP"),
         exp.Select: transforms.preprocess(
             [
                 _offset_to_limit,
@@ -247,6 +249,13 @@ class SQLiteGenerator(generator.Generator):
 
         return super().cast_sql(expression)
 
+    # https://www.sqlite.org/gencol.html
+    def computedcolumnconstraint_sql(self, expression: exp.ComputedColumnConstraint) -> str:
+        this = expression.this
+        this_sql = self.sql(this) if isinstance(this, exp.Paren) else f"({self.sql(this)})"
+        storage = " STORED" if expression.args.get("persisted") else ""
+        return f"AS {this_sql}{storage}"
+
     # Note: SQLite's TRUNC always returns REAL (e.g., trunc(10.99) -> 10.0), not INTEGER.
     # This creates a transpilation gap affecting division semantics, similar to Presto.
     # Unlike Presto where this only affects decimals=0, SQLite has no decimals parameter
@@ -308,13 +317,23 @@ class SQLiteGenerator(generator.Generator):
         else:
             distinct_sql = ""
 
+        order_sql = ""
         if isinstance(expression.this, exp.Order):
-            self.unsupported("SQLite GROUP_CONCAT doesn't support ORDER BY.")
             if expression.this.this and not distinct:
                 this = expression.this.this
 
+            # ORDER BY within aggregates requires SQLite 3.44+
+            order = expression.this.copy()
+            order.set("this", None)
+            order_sql = self.sql(order)
+
         separator = expression.args.get("separator")
-        return f"GROUP_CONCAT({distinct_sql}{self.format_args(this, separator)})"
+        if distinct and separator:
+            # SQLite rejects DISTINCT aggregates with more than one argument
+            self.unsupported("SQLite GROUP_CONCAT does not support DISTINCT with a separator")
+            separator = None
+
+        return f"GROUP_CONCAT({distinct_sql}{self.format_args(this, separator)}{order_sql})"
 
     def least_sql(self, expression: exp.Least) -> str:
         if expression.expressions:

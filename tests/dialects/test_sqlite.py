@@ -1,6 +1,7 @@
 from tests.dialects.test_dialect import Validator
 
-from sqlglot import exp
+from sqlglot import exp, transpile
+from sqlglot.errors import ErrorLevel, UnsupportedError
 from sqlglot.helper import logger as helper_logger
 
 
@@ -289,6 +290,37 @@ class TestSQLite(Validator):
 
             self.assertIn("Named columns are not supported in table alias.", cm.output[0])
 
+    def test_group_concat(self):
+        # ORDER BY within aggregates is supported since SQLite 3.44
+        self.validate_identity("SELECT GROUP_CONCAT(a ORDER BY a) FROM t")
+        self.validate_identity("SELECT GROUP_CONCAT(a, ';' ORDER BY a DESC) FROM t")
+        self.validate_identity("SELECT GROUP_CONCAT(DISTINCT x ORDER BY y) FROM t")
+        self.validate_identity("SELECT GROUP_CONCAT(a) FROM t")
+        self.validate_identity("SELECT GROUP_CONCAT(DISTINCT a) FROM t")
+
+        # SQLite rejects DISTINCT aggregates with more than one argument, so a
+        # custom separator cannot be combined with DISTINCT
+        self.validate_all(
+            "SELECT GROUP_CONCAT(DISTINCT x ORDER BY y DESC) FROM t",
+            read={"mysql": "SELECT GROUP_CONCAT(DISTINCT x ORDER BY y DESC SEPARATOR '') FROM t"},
+        )
+        with self.assertRaises(UnsupportedError):
+            transpile(
+                "SELECT GROUP_CONCAT(DISTINCT x ORDER BY y DESC SEPARATOR '') FROM t",
+                read="mysql",
+                write="sqlite",
+                unsupported_level=ErrorLevel.RAISE,
+            )
+
+    def test_median(self):
+        self.validate_identity("SELECT MEDIAN(x) FROM t")
+        self.validate_identity("SELECT MEDIAN(x) OVER () FROM t")
+
+    def test_regexp(self):
+        self.validate_identity("SELECT a REGEXP 'x' FROM t").assert_is(exp.Select).selects[
+            0
+        ].assert_is(exp.RegexpLike)
+
     def test_trunc(self):
         # SQLite TRUNC only accepts one argument
         self.validate_identity("TRUNC(3.14)").assert_is(exp.Trunc)
@@ -297,6 +329,11 @@ class TestSQLite(Validator):
         with self.assertLogs(helper_logger) as cm:
             self.validate_identity("TRUNC(3.14, 2)", "TRUNC(3.14)").assert_is(exp.Trunc)
             self.assertIn("'decimals' is not supported", cm.output[0])
+
+    def test_generated_columns(self):
+        # https://www.sqlite.org/gencol.html
+        self.validate_identity("CREATE TABLE t (a INTEGER, b INTEGER AS (a * 2) STORED)")
+        self.validate_identity("CREATE TABLE t (a INTEGER, b INTEGER AS (a * 2))")
 
     def test_ddl(self):
         for conflict_action in ("ABORT", "FAIL", "IGNORE", "REPLACE", "ROLLBACK"):
